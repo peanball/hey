@@ -1,4 +1,4 @@
-module github.com/rakyll/hey
+module github.com/unbork/hey
 
 require golang.org/x/net v0.28.0
 
