@@ -39,11 +39,13 @@ type report struct {
 
 	avgConn     float64
 	avgDNS      float64
+	avgTLS      float64
 	avgReq      float64
 	avgRes      float64
 	avgDelay    float64
 	connLats    []float64
 	dnsLats     []float64
+	tlsLats     []float64
 	reqLats     []float64
 	resLats     []float64
 	delayLats   []float64
@@ -73,6 +75,7 @@ func newReport(w io.Writer, results chan *result, output string, n int) *report 
 		w:           w,
 		connLats:    make([]float64, 0, cap),
 		dnsLats:     make([]float64, 0, cap),
+		tlsLats:     make([]float64, 0, cap),
 		reqLats:     make([]float64, 0, cap),
 		resLats:     make([]float64, 0, cap),
 		delayLats:   make([]float64, 0, cap),
@@ -92,12 +95,14 @@ func runReporter(r *report) {
 			r.avgConn += res.connDuration.Seconds()
 			r.avgDelay += res.delayDuration.Seconds()
 			r.avgDNS += res.dnsDuration.Seconds()
+			r.avgTLS += res.tlsDuration.Seconds()
 			r.avgReq += res.reqDuration.Seconds()
 			r.avgRes += res.resDuration.Seconds()
 			if len(r.resLats) < maxRes {
 				r.lats = append(r.lats, res.duration.Seconds())
 				r.connLats = append(r.connLats, res.connDuration.Seconds())
 				r.dnsLats = append(r.dnsLats, res.dnsDuration.Seconds())
+				r.tlsLats = append(r.tlsLats, res.tlsDuration.Seconds())
 				r.reqLats = append(r.reqLats, res.reqDuration.Seconds())
 				r.delayLats = append(r.delayLats, res.delayDuration.Seconds())
 				r.resLats = append(r.resLats, res.resDuration.Seconds())
@@ -117,11 +122,12 @@ func (r *report) finalize(total time.Duration) {
 	r.total = total
 	r.rps = float64(r.numRes) / r.total.Seconds()
 	r.average = r.avgTotal / float64(len(r.lats))
-	r.avgConn = r.avgConn / float64(len(r.lats))
-	r.avgDelay = r.avgDelay / float64(len(r.lats))
-	r.avgDNS = r.avgDNS / float64(len(r.lats))
-	r.avgReq = r.avgReq / float64(len(r.lats))
-	r.avgRes = r.avgRes / float64(len(r.lats))
+	r.avgConn = r.avgConn / float64(len(r.connLats))
+	r.avgDelay = r.avgDelay / float64(len(r.delayLats))
+	r.avgDNS = r.avgDNS / float64(len(r.dnsLats))
+	r.avgTLS = r.avgTLS / float64(len(r.tlsLats))
+	r.avgReq = r.avgReq / float64(len(r.reqLats))
+	r.avgRes = r.avgRes / float64(len(r.resLats))
 	r.print()
 }
 
@@ -148,6 +154,7 @@ func (r *report) snapshot() Report {
 		SizeTotal:   r.sizeTotal,
 		AvgConn:     r.avgConn,
 		AvgDNS:      r.avgDNS,
+		AvgTLS:      r.avgTLS,
 		AvgReq:      r.avgReq,
 		AvgRes:      r.avgRes,
 		AvgDelay:    r.avgDelay,
@@ -157,6 +164,7 @@ func (r *report) snapshot() Report {
 		Lats:        make([]float64, len(r.lats)),
 		ConnLats:    make([]float64, len(r.lats)),
 		DnsLats:     make([]float64, len(r.lats)),
+		TlsLats:     make([]float64, len(r.lats)),
 		ReqLats:     make([]float64, len(r.lats)),
 		ResLats:     make([]float64, len(r.lats)),
 		DelayLats:   make([]float64, len(r.lats)),
@@ -173,6 +181,7 @@ func (r *report) snapshot() Report {
 	copy(snapshot.Lats, r.lats)
 	copy(snapshot.ConnLats, r.connLats)
 	copy(snapshot.DnsLats, r.dnsLats)
+	copy(snapshot.TlsLats, r.tlsLats)
 	copy(snapshot.ReqLats, r.reqLats)
 	copy(snapshot.ResLats, r.resLats)
 	copy(snapshot.DelayLats, r.delayLats)
@@ -185,11 +194,13 @@ func (r *report) snapshot() Report {
 
 	sort.Float64s(r.connLats)
 	sort.Float64s(r.dnsLats)
+	sort.Float64s(r.tlsLats)
 	sort.Float64s(r.reqLats)
 	sort.Float64s(r.resLats)
 	sort.Float64s(r.delayLats)
 
-	snapshot.Histogram = r.histogram()
+	// TODO: consider other histograms?
+	snapshot.Histogram = r.histogram(r.lats)
 	snapshot.LatencyDistribution = r.latencies()
 
 	snapshot.Fastest = r.fastest
@@ -198,6 +209,10 @@ func (r *report) snapshot() Report {
 	snapshot.ConnMin = r.connLats[len(r.connLats)-1]
 	snapshot.DnsMax = r.dnsLats[0]
 	snapshot.DnsMin = r.dnsLats[len(r.dnsLats)-1]
+	if len(r.tlsLats) > 0 {
+		snapshot.TlsMax = r.tlsLats[0]
+		snapshot.TlsMin = r.tlsLats[len(r.tlsLats)-1]
+	}
 	snapshot.ReqMax = r.reqLats[0]
 	snapshot.ReqMin = r.reqLats[len(r.reqLats)-1]
 	snapshot.DelayMax = r.delayLats[0]
@@ -218,6 +233,9 @@ func (r *report) latencies() []LatencyDistribution {
 	pctls := []int{10, 25, 50, 75, 90, 95, 99}
 	data := make([]float64, len(pctls))
 	j := 0
+
+	// TODO: loop over percentiles
+	// For each percentile, create the latency distribution directly
 	for i := 0; i < len(r.lats) && j < len(pctls); i++ {
 		current := i * 100 / len(r.lats)
 		if current >= pctls[j] {
@@ -234,7 +252,7 @@ func (r *report) latencies() []LatencyDistribution {
 	return res
 }
 
-func (r *report) histogram() []Bucket {
+func (r *report) histogram(data []float64) []Bucket {
 	bc := 10
 	buckets := make([]float64, bc+1)
 	counts := make([]int, bc+1)
@@ -244,13 +262,13 @@ func (r *report) histogram() []Bucket {
 	}
 	buckets[bc] = r.slowest
 	var bi int
-	var max int
-	for i := 0; i < len(r.lats); {
-		if r.lats[i] <= buckets[bi] {
+	var maximum int
+	for i := 0; i < len(data); {
+		if data[i] <= buckets[bi] {
 			i++
 			counts[bi]++
-			if max < counts[bi] {
-				max = counts[bi]
+			if maximum < counts[bi] {
+				maximum = counts[bi]
 			}
 		} else if bi < len(buckets)-1 {
 			bi++
@@ -276,6 +294,7 @@ type Report struct {
 
 	AvgConn  float64
 	AvgDNS   float64
+	AvgTLS   float64
 	AvgReq   float64
 	AvgRes   float64
 	AvgDelay float64
@@ -283,6 +302,8 @@ type Report struct {
 	ConnMin  float64
 	DnsMax   float64
 	DnsMin   float64
+	TlsMax   float64
+	TlsMin   float64
 	ReqMax   float64
 	ReqMin   float64
 	ResMax   float64
@@ -293,6 +314,7 @@ type Report struct {
 	Lats        []float64
 	ConnLats    []float64
 	DnsLats     []float64
+	TlsLats     []float64
 	ReqLats     []float64
 	ResLats     []float64
 	DelayLats   []float64
@@ -312,8 +334,14 @@ type Report struct {
 }
 
 type LatencyDistribution struct {
-	Percentage int
-	Latency    float64
+	Percentage   int
+	Latency      float64
+	DnsLatency   float64
+	ConnLatency  float64
+	TlsLatency   float64
+	DelayLatency float64
+	ReqLatency   float64
+	RespLatency  float64
 }
 
 type Bucket struct {

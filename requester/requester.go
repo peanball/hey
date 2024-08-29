@@ -40,6 +40,7 @@ type result struct {
 	duration      time.Duration
 	connDuration  time.Duration // connection setup(DNS lookup + Dial up) duration
 	dnsDuration   time.Duration // dns lookup duration
+	tlsDuration   time.Duration // tls handshake duration
 	reqDuration   time.Duration // request "write" duration
 	resDuration   time.Duration // response "read" duration
 	delayDuration time.Duration // delay between response and request
@@ -147,8 +148,10 @@ func (b *Work) makeRequest(c *http.Client) {
 	s := now()
 	var size int64
 	var code int
-	var dnsStart, connStart, resStart, reqStart, delayStart time.Duration
-	var dnsDuration, connDuration, resDuration, reqDuration, delayDuration time.Duration
+	var dnsStart, tlsStart, connStart, resStart, reqStart, delayStart time.Duration
+	var dnsDuration, tlsDuration, connDuration, resDuration, reqDuration, delayDuration time.Duration
+	var tlsError error
+
 	var req *http.Request
 	if b.RequestFunc != nil {
 		req = b.RequestFunc()
@@ -161,6 +164,13 @@ func (b *Work) makeRequest(c *http.Client) {
 		},
 		DNSDone: func(dnsInfo httptrace.DNSDoneInfo) {
 			dnsDuration = now() - dnsStart
+		},
+		TLSHandshakeStart: func() {
+			tlsStart = now()
+		},
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+			tlsDuration = now() - tlsStart
+			tlsError = err
 		},
 		GetConn: func(h string) {
 			connStart = now()
@@ -191,6 +201,9 @@ func (b *Work) makeRequest(c *http.Client) {
 	t := now()
 	resDuration = t - resStart
 	finish := t - s
+	if err == nil {
+		err = tlsError
+	}
 	b.results <- &result{
 		offset:        s,
 		statusCode:    code,
@@ -199,6 +212,7 @@ func (b *Work) makeRequest(c *http.Client) {
 		contentLength: size,
 		connDuration:  connDuration,
 		dnsDuration:   dnsDuration,
+		tlsDuration:   tlsDuration,
 		reqDuration:   reqDuration,
 		resDuration:   resDuration,
 		delayDuration: delayDuration,
@@ -223,6 +237,7 @@ func (b *Work) runWorker(client *http.Client, n int) {
 			return
 		default:
 			if b.QPS > 0 {
+				// TODO: for small throttles, consider batching
 				<-throttle
 			}
 			b.makeRequest(client)
