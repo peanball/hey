@@ -74,18 +74,18 @@ func formatNumberInt(duration int) string {
 }
 
 func histogram(buckets []Bucket) string {
-	max := 0
+	maximum := 0
 	for _, b := range buckets {
-		if v := b.Count; v > max {
-			max = v
+		if v := b.Count; v > maximum {
+			maximum = v
 		}
 	}
 	res := new(bytes.Buffer)
 	for i := 0; i < len(buckets); i++ {
 		// Normalize bar lengths.
 		var barLen int
-		if max > 0 {
-			barLen = (buckets[i].Count*40 + max/2) / max
+		if maximum > 0 {
+			barLen = (buckets[i].Count*40 + maximum/2) / maximum
 		}
 		res.WriteString(fmt.Sprintf("  %4.3f [%v]\t|%v\n", buckets[i].Mark, buckets[i].Count, strings.Repeat(barChar, barLen)))
 	}
